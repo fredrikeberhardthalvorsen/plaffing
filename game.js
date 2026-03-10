@@ -41,6 +41,11 @@ class PlayScene extends Phaser.Scene {
     this.enemyContactDamage = 18;
     this.enemyBulletDamage = 12;
     this.enemyShootRange = 560;
+
+    this.skyTwinkleSpeed = 0.0019;
+    this.driftCloudCount = 8;
+    this.driftCloudSpeedMin = 8;
+    this.driftCloudSpeedMax = 24;
   }
 
   preload() {}
@@ -270,6 +275,11 @@ class PlayScene extends Phaser.Scene {
 
   createBackground() {
     this.makeSkyTexture();
+    this.makeStarFieldTexture("stars_far", 120, 0.55);
+    this.makeStarFieldTexture("stars_near", 70, 0.9);
+    this.makeCloudLayerTexture("clouds_far", "#d6eee7", "#aacfc4", 8, 0.28);
+    this.makeCloudLayerTexture("clouds_near", "#e8f4f0", "#b8dbd1", 11, 0.4);
+    this.makeCloudChunkTexture();
     this.makeMountainTexture("mountains_far", "#12383f", "#0e2c33", 20, 58);
     this.makeMountainTexture("mountains_mid", "#1f4a45", "#173a37", 28, 74);
     this.makeMountainTexture("mountains_near", "#32635a", "#274d46", 36, 94);
@@ -285,6 +295,57 @@ class PlayScene extends Phaser.Scene {
       .setOrigin(0)
       .setScrollFactor(0)
       .setDepth(-40);
+
+    this.starsFar = this.add
+      .tileSprite(
+        0,
+        0,
+        this.cameras.main.width,
+        this.cameras.main.height,
+        "stars_far"
+      )
+      .setOrigin(0)
+      .setScrollFactor(0)
+      .setDepth(-38);
+
+    this.starsNear = this.add
+      .tileSprite(
+        0,
+        0,
+        this.cameras.main.width,
+        this.cameras.main.height,
+        "stars_near"
+      )
+      .setOrigin(0)
+      .setScrollFactor(0)
+      .setDepth(-36)
+      .setAlpha(0.8);
+
+    this.cloudsFar = this.add
+      .tileSprite(
+        0,
+        this.groundY - 520,
+        this.worldWidth,
+        190,
+        "clouds_far"
+      )
+      .setOrigin(0, 1)
+      .setDepth(-34)
+      .setAlpha(0.5);
+
+    this.cloudsNear = this.add
+      .tileSprite(
+        0,
+        this.groundY - 480,
+        this.worldWidth,
+        230,
+        "clouds_near"
+      )
+      .setOrigin(0, 1)
+      .setDepth(-32)
+      .setAlpha(0.66);
+
+    this.createDriftClouds();
 
     this.bgFar = this.add
       .tileSprite(0, this.groundY - 280, this.worldWidth, 220, "mountains_far")
@@ -325,6 +386,147 @@ class PlayScene extends Phaser.Scene {
     }
 
     canvas.refresh();
+  }
+
+  makeCloudChunkTexture() {
+    const w = 104;
+    const h = 48;
+    const canvas = this.textures.createCanvas("cloud_chunk", w, h);
+    const ctx = canvas.getContext();
+    ctx.imageSmoothingEnabled = false;
+
+    ctx.clearRect(0, 0, w, h);
+
+    const puff = (x, y, pw, ph) => {
+      ctx.fillStyle = "#a4ccc0";
+      ctx.fillRect(x, y + 2, pw, ph);
+      ctx.fillStyle = "#e8f4f1";
+      ctx.fillRect(x + 1, y, pw - 2, ph - 2);
+    };
+
+    puff(8, 18, 24, 13);
+    puff(24, 11, 28, 16);
+    puff(46, 8, 30, 17);
+    puff(70, 14, 24, 14);
+    ctx.fillStyle = "#a4ccc0";
+    ctx.fillRect(16, 29, 68, 6);
+    ctx.fillStyle = "#e8f4f1";
+    ctx.fillRect(18, 28, 64, 3);
+
+    canvas.refresh();
+  }
+
+  makeStarFieldTexture(key, starCount, brightnessScale) {
+    const w = 512;
+    const h = 256;
+    const canvas = this.textures.createCanvas(key, w, h);
+    const ctx = canvas.getContext();
+    ctx.imageSmoothingEnabled = false;
+
+    ctx.clearRect(0, 0, w, h);
+
+    for (let i = 0; i < starCount; i += 1) {
+      const x = Phaser.Math.Between(0, w - 1);
+      const y = Phaser.Math.Between(0, h - 1);
+      const size = Phaser.Math.Between(1, 2);
+      const base = Phaser.Math.Between(180, 255);
+      const b = Math.round(base * brightnessScale);
+      ctx.fillStyle = `rgb(${b},${b},${b + Phaser.Math.Between(0, 15)})`;
+      ctx.fillRect(x, y, size, 1);
+
+      if (Phaser.Math.Between(0, 100) > 80) {
+        ctx.fillStyle = `rgba(255,255,255,${0.16 * brightnessScale})`;
+        ctx.fillRect(x - 1, y, size + 2, 1);
+      }
+    }
+
+    canvas.refresh();
+  }
+
+  makeCloudLayerTexture(key, brightColor, shadeColor, cloudCount, hazeAlpha) {
+    const w = 512;
+    const h = 180;
+    const canvas = this.textures.createCanvas(key, w, h);
+    const ctx = canvas.getContext();
+    ctx.imageSmoothingEnabled = false;
+
+    ctx.clearRect(0, 0, w, h);
+
+    for (let i = 0; i < cloudCount; i += 1) {
+      const puffW = Phaser.Math.Between(24, 42);
+      const puffH = Phaser.Math.Between(8, 14);
+      const x = Phaser.Math.Between(-20, w - 12);
+      const y = Phaser.Math.Between(18, h - 48);
+      const puffs = Phaser.Math.Between(3, 5);
+
+      for (let p = 0; p < puffs; p += 1) {
+        const px = x + p * Phaser.Math.Between(10, 16);
+        const py = y + Phaser.Math.Between(-3, 3);
+        const pw = puffW + Phaser.Math.Between(-8, 8);
+        const ph = puffH + Phaser.Math.Between(-2, 3);
+
+        ctx.fillStyle = shadeColor;
+        ctx.fillRect(px, py + 2, pw, ph);
+        ctx.fillStyle = brightColor;
+        ctx.fillRect(px + 1, py, pw - 2, ph - 2);
+      }
+
+      const flatWidth = puffW * puffs - 2;
+      ctx.fillStyle = shadeColor;
+      ctx.fillRect(x + 5, y + puffH + 2, flatWidth, 4);
+      ctx.fillStyle = brightColor;
+      ctx.fillRect(x + 6, y + puffH + 1, flatWidth - 2, 2);
+    }
+
+    ctx.fillStyle = `rgba(195, 230, 220, ${hazeAlpha})`;
+    ctx.fillRect(0, h - 28, w, 28);
+
+    canvas.refresh();
+  }
+
+  createDriftClouds() {
+    this.driftClouds = [];
+    for (let i = 0; i < this.driftCloudCount; i += 1) {
+      const scrollFactor = Phaser.Math.FloatBetween(0.17, 0.31);
+      const cloud = this.add
+        .image(
+          Phaser.Math.Between(0, this.worldWidth),
+          Phaser.Math.Between(this.groundY - 700, this.groundY - 470),
+          "cloud_chunk"
+        )
+        .setScrollFactor(scrollFactor)
+        .setDepth(-33)
+        .setAlpha(Phaser.Math.FloatBetween(0.35, 0.62))
+        .setScale(Phaser.Math.FloatBetween(1.1, 2.2));
+
+      cloud.cloudSpeed = Phaser.Math.FloatBetween(
+        this.driftCloudSpeedMin,
+        this.driftCloudSpeedMax
+      );
+      this.driftClouds.push(cloud);
+    }
+  }
+
+  updateDriftClouds(delta) {
+    const cam = this.cameras.main;
+    const dt = delta / 1000;
+    const margin = 180;
+
+    for (let i = 0; i < this.driftClouds.length; i += 1) {
+      const cloud = this.driftClouds[i];
+      cloud.x += cloud.cloudSpeed * dt;
+
+      const sx = cloud.x - cam.scrollX * cloud.scrollFactorX;
+      const halfW = (cloud.width * cloud.scaleX) * 0.5;
+      if (sx - halfW > cam.width + margin) {
+        cloud.x = cam.scrollX * cloud.scrollFactorX - margin - halfW;
+        cloud.y = Phaser.Math.Between(this.groundY - 700, this.groundY - 460);
+        cloud.cloudSpeed = Phaser.Math.FloatBetween(
+          this.driftCloudSpeedMin,
+          this.driftCloudSpeedMax
+        );
+      }
+    }
   }
 
   makeMountainTexture(key, topColor, baseColor, stepSize, maxHeight) {
@@ -695,7 +897,7 @@ class PlayScene extends Phaser.Scene {
   }
 
   update(time, delta) {
-    this.updateParallax();
+    this.updateParallax(time, delta);
 
     if (this.isPlayerDead) {
       if (Phaser.Input.Keyboard.JustDown(this.keys.restartR)) {
@@ -1371,12 +1573,28 @@ class PlayScene extends Phaser.Scene {
     }
   }
 
-  updateParallax() {
+  updateParallax(time, delta) {
     const camX = this.cameras.main.scrollX;
+    const camY = this.cameras.main.scrollY;
+    const twinkle = Math.sin(time * this.skyTwinkleSpeed);
     this.sky.tilePositionX = camX * 0.04;
+    this.sky.tilePositionY = camY * 0.02;
+    this.sky.alpha = 0.98 + twinkle * 0.02;
+    this.starsFar.tilePositionX = camX * 0.02;
+    this.starsFar.tilePositionY = camY * 0.01;
+    this.starsFar.alpha = 0.56 + twinkle * 0.05;
+    this.starsNear.tilePositionX = camX * 0.035;
+    this.starsNear.tilePositionY = camY * 0.02;
+    this.starsNear.alpha = 0.74 + Math.sin(time * (this.skyTwinkleSpeed * 1.7)) * 0.13;
+    this.cloudsFar.tilePositionX = camX * 0.08;
+    this.cloudsFar.tilePositionY = Math.sin(time * 0.00012) * 2;
+    this.cloudsNear.tilePositionX = camX * 0.14;
+    this.cloudsNear.tilePositionY = Math.cos(time * 0.00016) * 2;
     this.bgFar.tilePositionX = camX * 0.12;
     this.bgMid.tilePositionX = camX * 0.22;
     this.bgNear.tilePositionX = camX * 0.34;
+
+    this.updateDriftClouds(delta);
   }
 }
 
