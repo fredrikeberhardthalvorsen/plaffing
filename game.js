@@ -42,6 +42,10 @@ class PlayScene extends Phaser.Scene {
     this.enemyBulletDamage = 12;
     this.enemyShootRange = 560;
 
+    this.comboWindowMs = 2600;
+    this.comboMilestoneInterval = 5;
+    this.comboMilestoneShake = 0.0036;
+
     this.skyTwinkleSpeed = 0.0019;
     this.driftCloudCount = 8;
     this.driftCloudSpeedMin = 8;
@@ -609,6 +613,10 @@ class PlayScene extends Phaser.Scene {
     this.score = 0;
     this.isPlayerDead = false;
     this.nextPlayerDamageTime = 0;
+
+    this.comboCount = 0;
+    this.comboMultiplier = 1;
+    this.comboExpiresAt = 0;
   }
 
   createCombat() {
@@ -846,6 +854,19 @@ class PlayScene extends Phaser.Scene {
       .setDepth(1200)
       .setVisible(false);
 
+    this.comboPopup = this.add
+      .text(this.scale.width * 0.5, 72, "", {
+        fontFamily: "monospace",
+        fontSize: "26px",
+        color: "#ffe8a8",
+        stroke: "#2c1e0c",
+        strokeThickness: 6
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(1150)
+      .setVisible(false);
+
     this.grenadeChargeText = this.add
       .text(14, 202, "", {
         fontFamily: "monospace",
@@ -969,9 +990,71 @@ class PlayScene extends Phaser.Scene {
     this.updateBullets(time);
     this.updateEnemyBullets(time);
     this.updateGrenades(time);
+    this.updateComboState(time);
     this.updateAnimation(moveDir, onGround);
     this.updateGrenadeChargeIndicator(time);
     this.updateUi(time);
+  }
+
+  updateComboState(time) {
+    if (this.comboCount > 0 && time >= this.comboExpiresAt) {
+      this.resetCombo();
+      this.updateUi(time);
+    }
+  }
+
+  getComboMultiplierForCount(count) {
+    return 1 + Math.floor(count / 3) * 0.25;
+  }
+
+  formatComboMultiplier(value = this.comboMultiplier) {
+    return value.toFixed(2).replace(/\.00$/, "").replace(/0$/, "");
+  }
+
+  registerComboKill(time) {
+    this.comboCount += 1;
+    this.comboMultiplier = this.getComboMultiplierForCount(this.comboCount);
+    this.comboExpiresAt = time + this.comboWindowMs;
+
+    if (
+      this.comboCount >= this.comboMilestoneInterval &&
+      this.comboCount % this.comboMilestoneInterval === 0
+    ) {
+      this.cameras.main.shake(120, this.comboMilestoneShake);
+    }
+
+    if (this.comboCount >= 2) {
+      this.showComboPopup();
+    }
+  }
+
+  resetCombo() {
+    this.comboCount = 0;
+    this.comboMultiplier = 1;
+    this.comboExpiresAt = 0;
+  }
+
+  showComboPopup() {
+    this.tweens.killTweensOf(this.comboPopup);
+    this.comboPopup.setText(
+      `COMBO x${this.formatComboMultiplier()}  (${this.comboCount})`
+    );
+    this.comboPopup.setPosition(this.scale.width * 0.5, 72);
+    this.comboPopup.setScale(1);
+    this.comboPopup.setAlpha(1);
+    this.comboPopup.setVisible(true);
+
+    this.tweens.add({
+      targets: this.comboPopup,
+      y: 54,
+      alpha: 0,
+      scale: 1.15,
+      duration: 420,
+      ease: "Cubic.Out",
+      onComplete: () => {
+        this.comboPopup.setVisible(false);
+      }
+    });
   }
 
   updateAimAndWeapon() {
@@ -1465,7 +1548,9 @@ class PlayScene extends Phaser.Scene {
       enemy.armorText = null;
     }
 
-    this.score += enemy.maxArmor * 10;
+    this.registerComboKill(this.time.now);
+    const points = Math.round(enemy.maxArmor * 10 * this.comboMultiplier);
+    this.score += points;
     this.updateUi();
     enemy.disableBody(true, true);
   }
@@ -1503,6 +1588,7 @@ class PlayScene extends Phaser.Scene {
 
     this.playerHealth = Math.max(0, this.playerHealth - amount);
     this.nextPlayerDamageTime = now + this.playerInvulnMs;
+    this.resetCombo();
 
     this.player.setTintFill(0xff7b7b);
     this.time.delayedCall(90, () => {
@@ -1552,9 +1638,19 @@ class PlayScene extends Phaser.Scene {
         ? `${(grenadeRemaining / 1000).toFixed(1)}s`
         : "READY";
 
+    const comboRemaining = Math.max(0, this.comboExpiresAt - time);
+    const comboText =
+      this.comboCount > 0
+        ? `x${this.formatComboMultiplier()} (${this.comboCount}) ${(
+            comboRemaining / 1000
+          ).toFixed(1)}s`
+        : "x1";
+
     this.hudText.setText(
-      `Health: ${this.playerHealth}/${this.playerMaxHealth}\nScore: ${this.score}\nStatus: ${statusText}\nWeapon: ${weaponText}\nGrenade: ${grenadeText}`
+      `Health: ${this.playerHealth}/${this.playerMaxHealth}\nScore: ${this.score}\nCombo: ${comboText}\nStatus: ${statusText}\nWeapon: ${weaponText}\nGrenade: ${grenadeText}`
     );
+
+    this.hudText.setColor(this.comboCount > 0 ? "#fff2c7" : "#e6fff2");
   }
 
   updateAnimation(moveDir, onGround) {

@@ -29,6 +29,7 @@ camera control, particle effects, and a clean path to add more systems later.
 
 - Smooth movement with acceleration, drag, jump buffer, and coyote time
 - Mouse aim + rapid fire bullets
+- Timed kill-streak combo system with score multipliers and milestone feedback
 - Platform collisions and camera follow
 - Procedural pixel-style player and environment textures
 - Multi-layer parallax background
