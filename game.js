@@ -46,6 +46,11 @@ class PlayScene extends Phaser.Scene {
     this.comboMilestoneInterval = 5;
     this.comboMilestoneShake = 0.0036;
 
+    this.balloonHealAmount = 20;
+    this.balloonRapidFireMs = 8000;
+    this.balloonShieldMs = 5000;
+    this.rapidFireCooldownMs = 55;
+
     this.skyTwinkleSpeed = 0.0019;
     this.driftCloudCount = 8;
     this.driftCloudSpeedMin = 8;
@@ -66,6 +71,7 @@ class PlayScene extends Phaser.Scene {
     this.createGameState();
     this.createCombat();
     this.createEnemies();
+    this.createPowerups();
     this.createUi();
     this.createInput();
 
@@ -87,6 +93,7 @@ class PlayScene extends Phaser.Scene {
     this.makeGrenadeTexture();
     this.makeGunTexture();
     this.makeEnemyTexture();
+    this.makeBalloonTexture();
     this.makePlayerTexture("player_idle", "idle");
     this.makePlayerTexture("player_walk_1", "walk1");
     this.makePlayerTexture("player_walk_2", "walk2");
@@ -191,6 +198,33 @@ class PlayScene extends Phaser.Scene {
     ctx.fillRect(6, 5, 2, 2);
     ctx.fillStyle = "#d6dce1";
     ctx.fillRect(16, 2, 2, 2);
+
+    canvas.refresh();
+  }
+
+  makeBalloonTexture() {
+    const w = 18;
+    const h = 28;
+    const canvas = this.textures.createCanvas("balloon", w, h);
+    const ctx = canvas.getContext();
+    ctx.imageSmoothingEnabled = false;
+
+    ctx.clearRect(0, 0, w, h);
+
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(5, 4, 8, 1);
+    ctx.fillRect(4, 5, 10, 8);
+    ctx.fillRect(5, 13, 8, 5);
+    ctx.fillRect(6, 18, 6, 2);
+
+    ctx.fillStyle = "#d9ecff";
+    ctx.fillRect(6, 6, 2, 3);
+    ctx.fillRect(8, 5, 1, 2);
+
+    ctx.fillStyle = "#f2d0a1";
+    ctx.fillRect(8, 20, 2, 2);
+    ctx.fillRect(8, 22, 1, 3);
+    ctx.fillRect(8, 25, 2, 1);
 
     canvas.refresh();
   }
@@ -617,6 +651,9 @@ class PlayScene extends Phaser.Scene {
     this.comboCount = 0;
     this.comboMultiplier = 1;
     this.comboExpiresAt = 0;
+
+    this.rapidFireUntil = 0;
+    this.shieldUntil = 0;
   }
 
   createCombat() {
@@ -759,6 +796,91 @@ class PlayScene extends Phaser.Scene {
     );
   }
 
+  createPowerups() {
+    this.balloons = this.physics.add.group({
+      defaultKey: "balloon",
+      maxSize: 40,
+      allowGravity: false,
+      immovable: true
+    });
+
+    const spawnData = [
+      { x: 450, height: 210 },
+      { x: 980, height: 380 },
+      { x: 1650, height: 280 },
+      { x: 2380, height: 450 },
+      { x: 3040, height: 310 },
+      { x: 3890, height: 370 },
+      { x: 4480, height: 260 },
+      { x: 4960, height: 340 }
+    ];
+
+    spawnData.forEach((spawn) => this.spawnBalloon(spawn.x, spawn.height));
+
+    this.physics.add.overlap(this.player, this.balloons, (_player, balloon) => {
+      this.popBalloon(balloon, true);
+    });
+
+    this.physics.add.overlap(this.bullets, this.balloons, (bullet, balloon) => {
+      if (!bullet.active || !balloon.active) {
+        return;
+      }
+
+      this.destroyBullet(bullet, false);
+      this.popBalloon(balloon, false);
+    });
+  }
+
+  spawnBalloon(x, height) {
+    const y = this.yFromGround(height);
+    const balloon = this.balloons.get(x, y, "balloon");
+    if (!balloon) {
+      return;
+    }
+
+    balloon.enableBody(true, x, y, true, true);
+    balloon.setDepth(17);
+    balloon.setScale(1.9);
+    balloon.body.allowGravity = false;
+    balloon.body.setCircle(6, 3, 4);
+    balloon.baseY = y;
+    balloon.floatPhase = Phaser.Math.FloatBetween(0, Math.PI * 2);
+    balloon.floatSpeed = Phaser.Math.FloatBetween(0.0014, 0.0022);
+    balloon.floatAmp = Phaser.Math.Between(8, 17);
+
+    const tintChoices = [0xff6f91, 0x5ec8ff, 0xffcd56, 0x9cff72];
+    balloon.setTint(tintChoices[Phaser.Math.Between(0, tintChoices.length - 1)]);
+  }
+
+  popBalloon(balloon, touchedByPlayer) {
+    if (!balloon.active || this.isPlayerDead) {
+      return;
+    }
+
+    const x = balloon.x;
+    const y = balloon.y;
+    balloon.disableBody(true, true);
+    this.fx.emitParticleAt(x, y, 16);
+
+    const roll = Math.random();
+    if (roll < 0.4) {
+      this.playerHealth = Math.min(this.playerMaxHealth, this.playerHealth + this.balloonHealAmount);
+      this.showPowerupToast(`POP! +${this.balloonHealAmount} HP`, "#b7ffb7");
+    } else if (roll < 0.75) {
+      this.rapidFireUntil = Math.max(this.rapidFireUntil, this.time.now) + this.balloonRapidFireMs;
+      this.showPowerupToast("RAPID FIRE!", "#ffd88f");
+    } else {
+      this.shieldUntil = Math.max(this.shieldUntil, this.time.now) + this.balloonShieldMs;
+      this.showPowerupToast("SHIELD UP!", "#8fe9ff");
+    }
+
+    if (touchedByPlayer) {
+      this.score += 10;
+    }
+
+    this.updateUi();
+  }
+
   spawnEnemy(x, height) {
     const y = height > 0 ? this.yFromGround(height) - 38 : this.groundY - 38;
     const enemy = this.enemies.create(x, y, "enemy");
@@ -827,7 +949,7 @@ class PlayScene extends Phaser.Scene {
       .text(
         14,
         102,
-        "WASD / Arrow keys to move\nSpace, W or Up to jump (double jump)\nMouse to aim, hold LMB to shoot\nHold RMB to charge grenade, release to throw\nR to restart after death",
+        "WASD / Arrow keys to move\nSpace, W or Up to jump (double jump)\nMouse to aim, hold LMB to shoot\nHold RMB to charge grenade, release to throw\nPop balloons for random powerups\nR to restart after death",
         {
           fontFamily: "monospace",
           fontSize: "15px",
@@ -881,7 +1003,43 @@ class PlayScene extends Phaser.Scene {
 
     this.grenadeChargeBar = this.add.graphics().setScrollFactor(0).setDepth(1000);
 
+    this.powerupToast = this.add
+      .text(this.scale.width * 0.5, 118, "", {
+        fontFamily: "monospace",
+        fontSize: "24px",
+        color: "#fff6b2",
+        stroke: "#2b1f08",
+        strokeThickness: 6
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(1160)
+      .setVisible(false);
+
     this.updateUi();
+  }
+
+  showPowerupToast(text, color = "#fff6b2") {
+    this.tweens.killTweensOf(this.powerupToast);
+    this.powerupToast
+      .setText(text)
+      .setColor(color)
+      .setPosition(this.scale.width * 0.5, 118)
+      .setScale(1)
+      .setAlpha(1)
+      .setVisible(true);
+
+    this.tweens.add({
+      targets: this.powerupToast,
+      y: 96,
+      alpha: 0,
+      scale: 1.12,
+      duration: 520,
+      ease: "Cubic.Out",
+      onComplete: () => {
+        this.powerupToast.setVisible(false);
+      }
+    });
   }
 
   createInput() {
@@ -986,6 +1144,7 @@ class PlayScene extends Phaser.Scene {
     this.updateAimAndWeapon();
     this.updateShooting(time);
     this.updateGrenadeThrowing(time);
+    this.updateBalloons(time);
     this.updateEnemies(time);
     this.updateBullets(time);
     this.updateEnemyBullets(time);
@@ -994,6 +1153,21 @@ class PlayScene extends Phaser.Scene {
     this.updateAnimation(moveDir, onGround);
     this.updateGrenadeChargeIndicator(time);
     this.updateUi(time);
+  }
+
+  updateBalloons(time) {
+    if (!this.balloons) {
+      return;
+    }
+
+    this.balloons.children.each((balloon) => {
+      if (!balloon.active) {
+        return;
+      }
+
+      balloon.y = balloon.baseY + Math.sin(time * balloon.floatSpeed + balloon.floatPhase) * balloon.floatAmp;
+      balloon.setRotation(Math.sin(time * 0.0017 + balloon.floatPhase) * 0.08);
+    });
   }
 
   updateComboState(time) {
@@ -1124,7 +1298,8 @@ class PlayScene extends Phaser.Scene {
       return;
     }
 
-    this.nextShootTime = time + this.shootCooldownMs;
+    const cooldown = time < this.rapidFireUntil ? this.rapidFireCooldownMs : this.shootCooldownMs;
+    this.nextShootTime = time + cooldown;
   }
 
   updateWeaponHeat(time, delta) {
@@ -1582,6 +1757,11 @@ class PlayScene extends Phaser.Scene {
     }
 
     const now = this.time.now;
+    if (now < this.shieldUntil) {
+      this.fx.emitParticleAt(this.player.x, this.player.y - 14, 4);
+      return;
+    }
+
     if (now < this.nextPlayerDamageTime) {
       return;
     }
@@ -1646,8 +1826,19 @@ class PlayScene extends Phaser.Scene {
           ).toFixed(1)}s`
         : "x1";
 
+    const rapidFireRemaining = Math.max(0, this.rapidFireUntil - time);
+    const shieldRemaining = Math.max(0, this.shieldUntil - time);
+    let powerText = "NONE";
+    if (rapidFireRemaining > 0 && shieldRemaining > 0) {
+      powerText = `RAPID ${(rapidFireRemaining / 1000).toFixed(1)}s | SHIELD ${(shieldRemaining / 1000).toFixed(1)}s`;
+    } else if (rapidFireRemaining > 0) {
+      powerText = `RAPID ${(rapidFireRemaining / 1000).toFixed(1)}s`;
+    } else if (shieldRemaining > 0) {
+      powerText = `SHIELD ${(shieldRemaining / 1000).toFixed(1)}s`;
+    }
+
     this.hudText.setText(
-      `Health: ${this.playerHealth}/${this.playerMaxHealth}\nScore: ${this.score}\nCombo: ${comboText}\nStatus: ${statusText}\nWeapon: ${weaponText}\nGrenade: ${grenadeText}`
+      `Health: ${this.playerHealth}/${this.playerMaxHealth}\nScore: ${this.score}\nCombo: ${comboText}\nStatus: ${statusText}\nWeapon: ${weaponText}\nGrenade: ${grenadeText}\nPower: ${powerText}`
     );
 
     this.hudText.setColor(this.comboCount > 0 ? "#fff2c7" : "#e6fff2");
