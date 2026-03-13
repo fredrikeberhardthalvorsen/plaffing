@@ -59,10 +59,254 @@ class PlayScene extends Phaser.Scene {
     this.createEnemies();
     this.createUi();
     this.createInput();
+    this.createAudio();
+    this.createStartScreen();
 
     this.cameras.main.startFollow(this.player, true, 0.12, 0.08);
     this.cameras.main.setDeadzone(180, 120);
     this.cameras.main.roundPixels = true;
+  }
+
+  createAudio() {
+    this.audioCtx = this.sound ? this.sound.context : null;
+    this.audioMasterGain = null;
+    this.sfxCooldowns = {};
+
+    if (!this.audioCtx) {
+      return;
+    }
+
+    this.audioMasterGain = this.audioCtx.createGain();
+    this.audioMasterGain.gain.value = 0.22;
+    this.audioMasterGain.connect(this.audioCtx.destination);
+
+    this.audioUnlockHandler = () => this.tryUnlockAudio();
+    this.input.on("pointerdown", this.audioUnlockHandler);
+    this.input.keyboard.on("keydown", this.audioUnlockHandler);
+    this.events.once("shutdown", () => {
+      if (!this.audioUnlockHandler) {
+        return;
+      }
+
+      this.input.off("pointerdown", this.audioUnlockHandler);
+      this.input.keyboard.off("keydown", this.audioUnlockHandler);
+    });
+  }
+
+  tryUnlockAudio() {
+    if (!this.audioCtx) {
+      return;
+    }
+
+    if (this.audioCtx.state === "suspended") {
+      this.audioCtx.resume().catch(() => {});
+    }
+  }
+
+  canPlaySfx(key, minIntervalMs = 0) {
+    if (!this.audioCtx || !this.audioMasterGain) {
+      return false;
+    }
+
+    if (this.audioCtx.state !== "running") {
+      this.tryUnlockAudio();
+    }
+    if (this.audioCtx.state !== "running") {
+      return false;
+    }
+
+    if (minIntervalMs <= 0) {
+      return true;
+    }
+
+    const now = this.time.now;
+    const nextAllowed = this.sfxCooldowns[key] || 0;
+    if (now < nextAllowed) {
+      return false;
+    }
+
+    this.sfxCooldowns[key] = now + minIntervalMs;
+    return true;
+  }
+
+  playTone({
+    frequency = 440,
+    type = "square",
+    duration = 0.04,
+    release = 0.05,
+    volume = 0.2,
+    endFrequency = null
+  }) {
+    if (!this.audioCtx || !this.audioMasterGain || this.audioCtx.state !== "running") {
+      return;
+    }
+
+    const now = this.audioCtx.currentTime + 0.001;
+    const osc = this.audioCtx.createOscillator();
+    const gain = this.audioCtx.createGain();
+
+    osc.type = type;
+    osc.frequency.setValueAtTime(Math.max(24, frequency), now);
+    if (endFrequency !== null) {
+      osc.frequency.exponentialRampToValueAtTime(
+        Math.max(24, endFrequency),
+        now + duration
+      );
+    }
+
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, volume), now + 0.008);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration + release);
+
+    osc.connect(gain);
+    gain.connect(this.audioMasterGain);
+    osc.start(now);
+    osc.stop(now + duration + release + 0.02);
+  }
+
+  playShootSfx() {
+    if (!this.canPlaySfx("shoot", 25)) {
+      return;
+    }
+
+    const freq = 620 + Phaser.Math.Between(-50, 60);
+    this.playTone({
+      frequency: freq,
+      endFrequency: freq + 170,
+      type: "square",
+      duration: 0.022,
+      release: 0.03,
+      volume: 0.15
+    });
+  }
+
+  playEnemyShootSfx() {
+    if (!this.canPlaySfx("enemyShoot", 45)) {
+      return;
+    }
+
+    const freq = 280 + Phaser.Math.Between(-20, 30);
+    this.playTone({
+      frequency: freq,
+      endFrequency: Math.max(120, freq - 70),
+      type: "sawtooth",
+      duration: 0.04,
+      release: 0.04,
+      volume: 0.1
+    });
+  }
+
+  playJumpSfx() {
+    if (!this.canPlaySfx("jump", 70)) {
+      return;
+    }
+
+    this.playTone({
+      frequency: 320,
+      endFrequency: 510,
+      type: "triangle",
+      duration: 0.05,
+      release: 0.04,
+      volume: 0.08
+    });
+  }
+
+  playGrenadeThrowSfx() {
+    if (!this.canPlaySfx("grenadeThrow", 80)) {
+      return;
+    }
+
+    this.playTone({
+      frequency: 210,
+      endFrequency: 140,
+      type: "triangle",
+      duration: 0.07,
+      release: 0.08,
+      volume: 0.13
+    });
+  }
+
+  playGrenadeExplodeSfx() {
+    if (!this.canPlaySfx("grenadeExplode", 120)) {
+      return;
+    }
+
+    this.playTone({
+      frequency: 135,
+      endFrequency: 52,
+      type: "sawtooth",
+      duration: 0.13,
+      release: 0.14,
+      volume: 0.24
+    });
+    this.playTone({
+      frequency: 420,
+      endFrequency: 170,
+      type: "square",
+      duration: 0.06,
+      release: 0.09,
+      volume: 0.08
+    });
+  }
+
+  playEnemyDeathSfx() {
+    if (!this.canPlaySfx("enemyDeath", 45)) {
+      return;
+    }
+
+    this.playTone({
+      frequency: 240,
+      endFrequency: 95,
+      type: "square",
+      duration: 0.06,
+      release: 0.08,
+      volume: 0.1
+    });
+  }
+
+  playPlayerHitSfx() {
+    if (!this.canPlaySfx("playerHit", 70)) {
+      return;
+    }
+
+    this.playTone({
+      frequency: 180,
+      endFrequency: 95,
+      type: "sawtooth",
+      duration: 0.05,
+      release: 0.07,
+      volume: 0.13
+    });
+  }
+
+  playPlayerDeathSfx() {
+    if (!this.canPlaySfx("playerDeath", 250)) {
+      return;
+    }
+
+    this.playTone({
+      frequency: 190,
+      endFrequency: 60,
+      type: "sawtooth",
+      duration: 0.18,
+      release: 0.16,
+      volume: 0.2
+    });
+  }
+
+  playOverheatSfx() {
+    if (!this.canPlaySfx("overheat", 260)) {
+      return;
+    }
+
+    this.playTone({
+      frequency: 760,
+      endFrequency: 300,
+      type: "triangle",
+      duration: 0.1,
+      release: 0.08,
+      volume: 0.13
+    });
   }
 
   createProceduralTextures() {
@@ -405,6 +649,7 @@ class PlayScene extends Phaser.Scene {
   createGameState() {
     this.playerHealth = this.playerMaxHealth;
     this.score = 0;
+    this.hasGameStarted = false;
     this.isPlayerDead = false;
     this.nextPlayerDamageTime = 0;
   }
@@ -661,6 +906,95 @@ class PlayScene extends Phaser.Scene {
     this.updateUi();
   }
 
+  createStartScreen() {
+    this.physics.world.pause();
+    this.setGameplayUiVisible(false);
+
+    const panelWidth = 560;
+    const panelHeight = 280;
+    const panelX = this.scale.width * 0.5;
+    const panelY = this.scale.height * 0.48;
+
+    this.startOverlay = this.add.container(0, 0).setScrollFactor(0).setDepth(1400);
+
+    const dimmer = this.add
+      .rectangle(0, 0, this.scale.width, this.scale.height, 0x040814, 0.58)
+      .setOrigin(0)
+      .setScrollFactor(0);
+
+    const glow = this.add.graphics().setScrollFactor(0);
+    glow.fillStyle(0x163fbd, 0.9);
+    glow.fillRoundedRect(panelX - panelWidth * 0.5, panelY - panelHeight * 0.5, panelWidth, panelHeight, 20);
+    glow.lineStyle(6, 0x6ff7ff, 0.95);
+    glow.strokeRoundedRect(panelX - panelWidth * 0.5, panelY - panelHeight * 0.5, panelWidth, panelHeight, 20);
+    glow.lineStyle(2, 0xb2ffff, 0.8);
+    glow.strokeRoundedRect(panelX - panelWidth * 0.5 + 10, panelY - panelHeight * 0.5 + 10, panelWidth - 20, panelHeight - 20, 14);
+
+    const titleText = this.add
+      .text(panelX, panelY - 48, "START\nPLAFFING", {
+        fontFamily: "monospace",
+        fontSize: "54px",
+        fontStyle: "bold",
+        align: "center",
+        color: "#e8fdff",
+        stroke: "#0d2f7d",
+        strokeThickness: 10
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0);
+
+    const playText = this.add
+      .text(panelX, panelY + 52, "Press space to start.", {
+        fontFamily: "monospace",
+        fontSize: "24px",
+        align: "center",
+        color: "#ffd77d",
+        stroke: "#4a2300",
+        strokeThickness: 5
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0);
+
+    this.tweens.add({
+      targets: playText,
+      alpha: 0.35,
+      duration: 640,
+      yoyo: true,
+      repeat: -1
+    });
+
+    this.startOverlay.add([dimmer, glow, titleText, playText]);
+  }
+
+  setGameplayUiVisible(isVisible) {
+    this.hudText.setVisible(isVisible);
+    this.helpText.setVisible(isVisible);
+    this.grenadeChargeText.setVisible(isVisible && this.isChargingGrenade);
+    this.grenadeChargeBar.setVisible(isVisible);
+  }
+
+  startGame() {
+    if (this.hasGameStarted) {
+      return;
+    }
+
+    this.hasGameStarted = true;
+    this.physics.world.resume();
+    this.setGameplayUiVisible(true);
+
+    if (this.startOverlay) {
+      this.tweens.add({
+        targets: this.startOverlay,
+        alpha: 0,
+        duration: 180,
+        onComplete: () => {
+          this.startOverlay.destroy(true);
+          this.startOverlay = null;
+        }
+      });
+    }
+  }
+
   createInput() {
     if (this.input.mouse) {
       this.input.mouse.disableContextMenu();
@@ -696,6 +1030,13 @@ class PlayScene extends Phaser.Scene {
 
   update(time, delta) {
     this.updateParallax();
+
+    if (!this.hasGameStarted) {
+      if (Phaser.Input.Keyboard.JustDown(this.keys.jumpSpace)) {
+        this.startGame();
+      }
+      return;
+    }
 
     if (this.isPlayerDead) {
       if (Phaser.Input.Keyboard.JustDown(this.keys.restartR)) {
@@ -747,6 +1088,7 @@ class PlayScene extends Phaser.Scene {
       this.jumpsUsed += 1;
       this.jumpBufferTimer = 0;
       this.coyoteTimer = 0;
+      this.playJumpSfx();
     }
 
     if (this.isJumpReleased() && this.player.body.velocity.y < -120) {
@@ -830,11 +1172,13 @@ class PlayScene extends Phaser.Scene {
     this.physics.velocityFromRotation(this.aimAngle, speed, bullet.body.velocity);
 
     this.fx.emitParticleAt(spawnX, spawnY, 8);
+    this.playShootSfx();
 
     this.weaponHeat = Math.min(this.weaponHeatMax, this.weaponHeat + this.weaponHeatPerShot);
     if (this.weaponHeat >= this.weaponHeatMax) {
       this.weaponOverheatedUntil = time + this.weaponOverheatLockMs;
       this.fx.emitParticleAt(spawnX, spawnY, 12);
+      this.playOverheatSfx();
       this.nextShootTime = this.weaponOverheatedUntil;
       return;
     }
@@ -932,6 +1276,7 @@ class PlayScene extends Phaser.Scene {
     grenade.body.velocity.y -= liftBoost;
 
     this.fx.emitParticleAt(spawnX, spawnY, 5);
+    this.playGrenadeThrowSfx();
     this.nextGrenadeTime = time + this.grenadeCooldownMs;
   }
 
@@ -1030,6 +1375,7 @@ class PlayScene extends Phaser.Scene {
     this.physics.velocityFromRotation(angle, speed, bullet.body.velocity);
 
     this.enemyShotFx.emitParticleAt(spawnX, spawnY, 5);
+    this.playEnemyShootSfx();
     enemy.nextShotTime = time + enemy.shootCooldownMs + Phaser.Math.Between(-150, 220);
   }
 
@@ -1131,6 +1477,7 @@ class PlayScene extends Phaser.Scene {
     this.destroyGrenade(grenade);
 
     this.grenadeExplosionFx.emitParticleAt(x, y, 34);
+    this.playGrenadeExplodeSfx();
     this.showShockwave(x, y);
 
     this.enemies.children.each((enemy) => {
@@ -1265,6 +1612,7 @@ class PlayScene extends Phaser.Scene {
 
     this.score += enemy.maxArmor * 10;
     this.updateUi();
+    this.playEnemyDeathSfx();
     enemy.disableBody(true, true);
   }
 
@@ -1310,6 +1658,7 @@ class PlayScene extends Phaser.Scene {
     });
 
     this.updateUi();
+    this.playPlayerHitSfx();
 
     if (this.playerHealth <= 0) {
       this.handlePlayerDeath();
@@ -1332,6 +1681,7 @@ class PlayScene extends Phaser.Scene {
     this.player.body.enable = false;
     this.weapon.setVisible(false);
     this.deathText.setVisible(true);
+    this.playPlayerDeathSfx();
     this.updateGrenadeChargeIndicator();
     this.updateUi();
   }
