@@ -46,6 +46,12 @@ class PlayScene extends Phaser.Scene {
     this.comboMilestoneInterval = 5;
     this.comboMilestoneShake = 0.0036;
 
+    this.dashSpeed = 1020;
+    this.dashDurationMs = 180;
+    this.dashCooldownMs = 1200;
+    this.dashShake = 0.003;
+    this.dashAfterimageCount = 3;
+    this.dashAfterimageAlpha = 0.45;
     this.balloonHealAmount = 20;
     this.balloonRapidFireMs = 8000;
     this.balloonShieldMs = 5000;
@@ -919,6 +925,11 @@ class PlayScene extends Phaser.Scene {
     this.comboMultiplier = 1;
     this.comboExpiresAt = 0;
 
+    this.isDashing = false;
+    this.dashEndTime = 0;
+    this.nextDashTime = 0;
+    this.dashAfterimages = [];
+
     this.rapidFireUntil = 0;
     this.shieldUntil = 0;
     this.helpPinned = false;
@@ -980,6 +991,17 @@ class PlayScene extends Phaser.Scene {
       blendMode: "ADD"
     });
     this.enemyExplosionFx.setDepth(40);
+
+    this.dashFx = this.add.particles(0, 0, "px", {
+      speed: { min: 40, max: 160 },
+      angle: { min: 0, max: 360 },
+      scale: { start: 1.6, end: 0 },
+      lifespan: { min: 120, max: 240 },
+      quantity: 0,
+      tint: [0x5af0f0, 0x3dcbeb, 0x88ffff],
+      blendMode: "ADD"
+    });
+    this.dashFx.setDepth(25);
 
     this.grenadeExplosionFx = this.add.particles(0, 0, "px", {
       speed: { min: 130, max: 430 },
@@ -1219,7 +1241,7 @@ class PlayScene extends Phaser.Scene {
       .text(
         14,
         102,
-        "WASD / Arrow keys to move\nSpace, W or Up to jump (double jump)\nMouse to aim, hold LMB to shoot\nHold RMB to charge grenade, release to throw\nPop balloons for random powerups\nR to restart after death",
+        "WASD / Arrow keys to move\nSpace, W or Up to jump (double jump)\nMouse to aim, hold LMB to shoot\nHold RMB to charge grenade, release to throw\nShift to dash (invulnerable)\nPop balloons for random powerups\nR to restart after death",
         {
           fontFamily: "monospace",
           fontSize: "15px",
@@ -1435,7 +1457,8 @@ class PlayScene extends Phaser.Scene {
       jumpW: Phaser.Input.Keyboard.KeyCodes.W,
       jumpUp: Phaser.Input.Keyboard.KeyCodes.UP,
       toggleHelpH: Phaser.Input.Keyboard.KeyCodes.H,
-      restartR: Phaser.Input.Keyboard.KeyCodes.R
+      restartR: Phaser.Input.Keyboard.KeyCodes.R,
+      dashShift: Phaser.Input.Keyboard.KeyCodes.SHIFT
     });
   }
 
@@ -1528,6 +1551,11 @@ class PlayScene extends Phaser.Scene {
       this.player.setVelocity(0, 0);
       this.jumpsUsed = 0;
     }
+
+    if (Phaser.Input.Keyboard.JustDown(this.keys.dashShift)) {
+      this.startDash(time);
+    }
+    this.updateDash(time);
 
     this.updateWeaponHeat(time, delta);
     this.updateAimAndWeapon();
@@ -1658,6 +1686,85 @@ class PlayScene extends Phaser.Scene {
         this.comboPopup.setVisible(false);
       }
     });
+  }
+
+  startDash(time) {
+    if (this.isDashing || this.isPlayerDead || time < this.nextDashTime) {
+      return;
+    }
+
+    this.isDashing = true;
+    this.dashEndTime = time + this.dashDurationMs;
+    this.nextDashTime = time + this.dashCooldownMs;
+
+    const dirX = this.facing;
+    this.player.setVelocityX(dirX * this.dashSpeed);
+    this.player.setAccelerationX(0);
+
+    this.nextPlayerDamageTime = Math.max(
+      this.nextPlayerDamageTime,
+      this.dashEndTime
+    );
+
+    this.cameras.main.shake(80, this.dashShake);
+    this.spawnDashAfterimages();
+  }
+
+  updateDash(time) {
+    if (!this.isDashing) {
+      return;
+    }
+
+    this.dashFx.emitParticleAt(this.player.x, this.player.y, 2);
+
+    if (time >= this.dashEndTime) {
+      this.isDashing = false;
+    } else {
+      const dirX = this.facing;
+      this.player.setVelocityX(dirX * this.dashSpeed);
+      this.player.setAccelerationX(0);
+    }
+  }
+
+  spawnDashAfterimages() {
+    const spacing = 16;
+    for (let i = 0; i < this.dashAfterimageCount; i += 1) {
+      const offsetX = -this.facing * spacing * (i + 1);
+      const ghost = this.add
+        .image(
+          this.player.x + offsetX,
+          this.player.y,
+          this.player.texture.key
+        )
+        .setScale(this.player.scaleX, this.player.scaleY)
+        .setFlipX(this.player.flipX)
+        .setAlpha(this.dashAfterimageAlpha - i * 0.1)
+        .setTint(0x5af0f0)
+        .setDepth(9);
+
+      this.dashAfterimages.push(ghost);
+
+      this.tweens.add({
+        targets: ghost,
+        alpha: 0,
+        duration: 220 + i * 60,
+        ease: "Quad.Out",
+        onComplete: () => {
+          ghost.destroy();
+          const idx = this.dashAfterimages.indexOf(ghost);
+          if (idx !== -1) {
+            this.dashAfterimages.splice(idx, 1);
+          }
+        }
+      });
+    }
+  }
+
+  clearDashAfterimages() {
+    for (let i = 0; i < this.dashAfterimages.length; i += 1) {
+      this.dashAfterimages[i].destroy();
+    }
+    this.dashAfterimages.length = 0;
   }
 
   updateAimAndWeapon() {
@@ -2245,6 +2352,8 @@ class PlayScene extends Phaser.Scene {
     this.weapon.setVisible(false);
     this.shieldAura.setVisible(false);
     this.deathText.setVisible(true);
+    this.isDashing = false;
+    this.clearDashAfterimages();
     this.playPlayerDeathSfx();
     this.updateGrenadeChargeIndicator();
     this.updateUi();
@@ -2272,6 +2381,12 @@ class PlayScene extends Phaser.Scene {
           ).toFixed(1)}s`
         : "x1";
 
+    const dashRemaining = Math.max(0, this.nextDashTime - time);
+    const dashText = this.isDashing
+      ? "DASHING"
+      : dashRemaining > 0
+        ? `${(dashRemaining / 1000).toFixed(1)}s`
+        : "READY";
     const rapidFireRemaining = Math.max(0, this.rapidFireUntil - time);
     const shieldRemaining = Math.max(0, this.shieldUntil - time);
     let powerText = "NONE";
@@ -2284,7 +2399,7 @@ class PlayScene extends Phaser.Scene {
     }
 
     this.hudText.setText(
-      `Health: ${this.playerHealth}/${this.playerMaxHealth}\nScore: ${this.score}\nCombo: ${comboText}\nStatus: ${statusText}\nWeapon: ${weaponText}\nGrenade: ${grenadeText}\nPower: ${powerText}`
+      `Health: ${this.playerHealth}/${this.playerMaxHealth}\nScore: ${this.score}\nCombo: ${comboText}\nStatus: ${statusText}\nWeapon: ${weaponText}\nGrenade: ${grenadeText}\nPower: ${powerText}\nDash: ${dashText}`
     );
 
     this.hudText.setColor(this.comboCount > 0 ? "#fff2c7" : "#e6fff2");
